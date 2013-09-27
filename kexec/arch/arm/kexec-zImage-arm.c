@@ -18,8 +18,6 @@
 #include "../../kexec-syscall.h"
 #include "crashdump-arm.h"
 
-#define BOOT_PARAMS_SIZE 1536
-
 struct tag_header {
 	uint32_t size;
 	uint32_t tag;
@@ -102,7 +100,9 @@ void zImage_arm_usage(void)
 static
 struct tag * atag_read_tags(void)
 {
-	static unsigned long buf[BOOT_PARAMS_SIZE];
+	unsigned long buf[1024];
+	unsigned long *tags = NULL;
+	size_t size = 0, read;
 	const char fn[]= "/proc/atags";
 	FILE *fp;
 	fp = fopen(fn, "r");
@@ -112,20 +112,30 @@ struct tag * atag_read_tags(void)
 		return NULL;
 	}
 
-	if (!fread(buf, sizeof(buf[1]), BOOT_PARAMS_SIZE, fp)) {
-		fclose(fp);
-		return NULL;
+	do {
+		read = fread(buf, sizeof(buf[1]), sizeof(buf)/sizeof(buf[1]), fp);
+		if(ferror(fp)) {
+			fprintf(stderr, "Cannot read %s: %s\n", fn, strerror(errno));
+			goto fail;
+		}
+
+		tags = realloc(tags, (size+read)*sizeof(buf[1]));
+		memcpy(tags+size, buf, read*sizeof(buf[1]));
+		size += read;
+	} while(!feof(fp));
+
+	if (size == 0) {
+		fprintf(stderr, "Read 0 atags bytes: %s\n", fn);
+		goto fail;
 	}
 
-	if (ferror(fp)) {
-		fprintf(stderr, "Cannot read %s: %s\n",
-			fn, strerror(errno));
-		fclose(fp);
-		return NULL;
-	}
-
+	goto exit;
+fail:
+	free(tags);
+	tags = NULL;
+exit:
 	fclose(fp);
-	return (struct tag *) buf;
+	return (struct tag *) tags;
 }
 
 
@@ -143,6 +153,7 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 	buf = xmalloc(getpagesize());
 	if (!buf) {
 		fprintf(stderr, "Compiling ATAGs: out of memory\n");
+		free(saved_tags);
 		return -1;
 	}
 
@@ -167,6 +178,7 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 			}
 			saved_tags = tag_next(saved_tags);
 		}
+		free(saved_tags);
 	} else {
 		params->hdr.size = 2;
 		params->hdr.tag = ATAG_CORE;
