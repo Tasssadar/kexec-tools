@@ -78,6 +78,7 @@ static inline long kexec_reboot(void)
 
 #define KEXEC_ON_CRASH		0x00000001
 #define KEXEC_PRESERVE_CONTEXT	0x00000002
+#define KEXEC_HARDBOOT		0x00000004
 #define KEXEC_ARCH_MASK		0xffff0000
 
 /* These values match the ELF architecture values. 
