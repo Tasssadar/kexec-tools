@@ -671,10 +671,9 @@ static int my_load(const char *type, int fileind, int argc, char **argv,
 	kernel = argv[fileind];
 	/* slurp in the input kernel */
 	kernel_buf = slurp_decompress_file(kernel, &kernel_size);
-#if 0
+
 	fprintf(stderr, "kernel: %p kernel_size: %lx\n", 
 		kernel_buf, kernel_size);
-#endif
 
 	if (get_memory_ranges(&info.memory_range, &info.memory_ranges,
 		info.kexec_flags) < 0) {
@@ -751,11 +750,11 @@ static int my_load(const char *type, int fileind, int argc, char **argv,
 	update_purgatory(&info);
 	if (entry)
 		info.entry = entry;
-#if 0
+
 	fprintf(stderr, "kexec_load: entry = %p flags = %lx\n", 
 		info.entry, info.kexec_flags);
 	print_segments(stderr, &info);
-#endif
+
 	result = kexec_load(
 		info.entry, info.nr_segments, info.segment, info.kexec_flags);
 	if (result != 0) {
