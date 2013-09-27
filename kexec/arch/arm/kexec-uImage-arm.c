@@ -11,7 +11,9 @@
 
 int uImage_arm_probe(const char *buf, off_t len)
 {
-	return uImage_probe(buf, len, IH_ARCH_ARM);
+// undefined reference on Android, and I don't need uImages
+//	return uImage_probe(buf, len, IH_ARCH_ARM);
+	return -1;
 }
 
 int uImage_arm_load(int argc, char **argv, const char *buf, off_t len,
