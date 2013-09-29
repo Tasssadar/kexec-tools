@@ -138,6 +138,22 @@ exit:
 	return (struct tag *) tags;
 }
 
+static
+void tag_buf_add(struct tag *t, char **buf, size_t *size)
+{
+	*buf = xrealloc(*buf, (*size) + byte_size(t));
+	memcpy((*buf) + (*size), t, byte_size(t));
+	*size += byte_size(t);
+}
+
+static
+uint32_t *tag_buf_find_initrd_start(struct tag *buf)
+{
+	for(; byte_size(buf); buf = tag_next(buf))
+		if(buf->hdr.tag == ATAG_INITRD2)
+			return &buf->u.initrd.start;
+	return NULL;
+}
 
 static
 int atag_arm_load(struct kexec_info *info, unsigned long base,
@@ -145,26 +161,24 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 	const char *initrd, off_t initrd_len, off_t initrd_off)
 {
 	struct tag *saved_tags = atag_read_tags();
-	char *buf;
-	off_t len;
-	struct tag *params;
+	char *buf = NULL;
+	size_t buf_size = 0;
+	struct tag *params, *tag;
 	uint32_t *initrd_start = NULL;
-	
-	buf = xmalloc(getpagesize());
-	if (!buf) {
+
+	params = xmalloc(getpagesize());
+	if (!params) {
 		fprintf(stderr, "Compiling ATAGs: out of memory\n");
 		free(saved_tags);
 		return -1;
 	}
-
-	memset(buf, 0xff, getpagesize());
-	params = (struct tag *)buf;
+	memset(params, 0xff, getpagesize());
 
 	if (saved_tags) {
 		// Copy tags
-		saved_tags = (struct tag *) saved_tags;
-		while(byte_size(saved_tags)) {
-			switch (saved_tags->hdr.tag) {
+		tag = saved_tags;
+		while(byte_size(tag)) {
+			switch (tag->hdr.tag) {
 			case ATAG_INITRD:
 			case ATAG_INITRD2:
 			case ATAG_CMDLINE:
@@ -173,24 +187,26 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 				break;
 			default:
 				// copy all other tags
-				memcpy(params, saved_tags, byte_size(saved_tags));
-				params = tag_next(params);
+				tag_buf_add(tag, &buf, &buf_size);
+				break;
 			}
-			saved_tags = tag_next(saved_tags);
+			tag = tag_next(tag);
 		}
 		free(saved_tags);
 	} else {
 		params->hdr.size = 2;
 		params->hdr.tag = ATAG_CORE;
-		params = tag_next(params);
+		tag_buf_add(params, &buf, &buf_size);
+		memset(params, 0xff, byte_size(params));
 	}
 
 	if (initrd) {
 		params->hdr.size = tag_size(tag_initrd);
 		params->hdr.tag = ATAG_INITRD2;
-		initrd_start = &params->u.initrd.start;
 		params->u.initrd.size = initrd_len;
-		params = tag_next(params);
+
+		tag_buf_add(params, &buf, &buf_size);
+		memset(params, 0xff, byte_size(params));
 	}
 
 	if (command_line) {
@@ -199,17 +215,27 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 		memcpy(params->u.cmdline.cmdline, command_line,
 			command_line_len);
 		params->u.cmdline.cmdline[command_line_len - 1] = '\0';
-		params = tag_next(params);
+
+		tag_buf_add(params, &buf, &buf_size);
+		memset(params, 0xff, byte_size(params));
 	}
 
 	params->hdr.size = 0;
 	params->hdr.tag = ATAG_NONE;
+	tag_buf_add(params, &buf, &buf_size);
 
-	len = ((char *)params - buf) + sizeof(struct tag_header);
+	free(params);
 
-	add_segment(info, buf, len, base, len);
+	add_segment(info, buf, buf_size, base, buf_size);
 
 	if (initrd) {
+		initrd_start = tag_buf_find_initrd_start((struct tag *)buf);
+		if(!initrd_start)
+		{
+			fprintf(stderr, "Failed to find initrd start!\n");
+			return -1;
+		}
+
 		*initrd_start = locate_hole(info, initrd_len, getpagesize(),
 				initrd_off, ULONG_MAX, INT_MAX);
 		if (*initrd_start == ULONG_MAX)
