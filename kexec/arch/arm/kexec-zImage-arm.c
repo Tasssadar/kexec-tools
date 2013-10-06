@@ -14,6 +14,9 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <arch/options.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include "../../kexec.h"
 #include "../../kexec-syscall.h"
 #include "crashdump-arm.h"
@@ -102,27 +105,26 @@ struct tag * atag_read_tags(void)
 {
 	unsigned long buf[1024];
 	unsigned long *tags = NULL;
-	size_t size = 0, read;
+	ssize_t size = 0, read_b;
 	const char fn[]= "/proc/atags";
-	FILE *fp;
-	fp = fopen(fn, "r");
-	if (!fp) {
+	int fd = open(fn, O_RDONLY);
+	if (fd == -1) {
 		fprintf(stderr, "Cannot open %s: %s\n", 
 			fn, strerror(errno));
 		return NULL;
 	}
 
 	do {
-		read = fread(buf, sizeof(buf[1]), sizeof(buf)/sizeof(buf[1]), fp);
-		if(ferror(fp)) {
+		read_b = read(fd, buf, sizeof(buf));
+		if(read_b == -1) {
 			fprintf(stderr, "Cannot read %s: %s\n", fn, strerror(errno));
 			goto fail;
 		}
 
-		tags = realloc(tags, (size+read)*sizeof(buf[1]));
-		memcpy(tags+size, buf, read*sizeof(buf[1]));
-		size += read;
-	} while(!feof(fp));
+		tags = realloc(tags, (size+read_b));
+		memcpy(((char*)tags) + size, buf, read_b);
+		size += read_b;
+	} while(read_b != 0);
 
 	if (size == 0) {
 		fprintf(stderr, "Read 0 atags bytes: %s\n", fn);
@@ -134,7 +136,7 @@ fail:
 	free(tags);
 	tags = NULL;
 exit:
-	fclose(fp);
+	close(fd);
 	return (struct tag *) tags;
 }
 
