@@ -22,6 +22,7 @@ LOCAL_MODULE_TAGS             := optional
 LOCAL_C_INCLUDES              := $(LOCAL_PATH)/include \
                                  $(LOCAL_PATH)/util_lib/include \
                                  $(LOCAL_PATH)/kexec/arch/arm/include \
+                                 $(LOCAL_PATH)/kexec/libfdt \
                                  external/zlib
 LOCAL_SRC_FILES               := kexec/kexec.c kexec/ifdown.c \
                                  kexec/kexec-elf.c kexec/kexec-elf-exec.c \
@@ -43,7 +44,11 @@ LOCAL_SRC_FILES               := kexec/kexec.c kexec/ifdown.c \
                                  kexec/arch/arm/kexec-uImage-arm.c \
                                  kexec/arch/arm/kexec-arm.c \
                                  kexec/arch/arm/crashdump-arm.c \
-                                 kexec/kexec-uImage.c kexec/purgatory.c
+                                 kexec/kexec-uImage.c kexec/purgatory.c \
+                                 kexec/fs2dt.c \
+                                 kexec/libfdt/fdt.c kexec/libfdt/fdt_ro.c \
+                                 kexec/libfdt/fdt_rw.c kexec/libfdt/fdt_strerror.c \
+                                 kexec/libfdt/fdt_sw.c kexec/libfdt/fdt_wip.c
 LOCAL_FORCE_STATIC_EXECUTABLE := true
 LOCAL_STATIC_LIBRARIES        := libutil_kt libz libc
 include $(BUILD_EXECUTABLE)

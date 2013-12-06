@@ -17,9 +17,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <libfdt.h>
 #include "../../kexec.h"
 #include "../../kexec-syscall.h"
 #include "crashdump-arm.h"
+#include "../../fs2dt.h"
+
+off_t initrd_base = 0, initrd_size = 0;
 
 struct tag_header {
 	uint32_t size;
@@ -97,6 +101,10 @@ void zImage_arm_usage(void)
 		"     --append=STRING       Set the kernel command line to STRING.\n"
 		"     --initrd=FILE         Use FILE as the kernel's initial ramdisk.\n"
 		"     --ramdisk=FILE        Use FILE as the kernel's initial ramdisk.\n"
+		"     --dtb                 Load dtb from zImage or /proc/device-tree instead of using atags.\n"
+		"                           DTB appended to zImage currently only works on MSM devices.\n"
+		"     --rd-addr=<addr>      Address to load initrd to.\n"
+		"     --atags-addr=<addr>   Address to load atags/dtb to.\n"
 		);
 }
 
@@ -248,20 +256,169 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 	return 0;
 }
 
+#define DTB_MAGIC               0xedfe0dd0
+#define DTB_OFFSET              0x2C
+#define DTB_PAD_SIZE            1024
+#define INVALID_SOC_REV_ID 0xFFFFFFFF
+
+struct msm_id
+{
+	uint32_t platform_id;
+	uint32_t hardware_id;
+	uint32_t soc_rev;
+};
+
+static uint32_t dtb_compatible(void *dtb, struct msm_id *devid)
+{
+	int root_offset;
+	const void *prop;
+	struct msm_id msm_id;
+	int len;
+
+	root_offset = fdt_path_offset(dtb, "/");
+	if (root_offset < 0)
+		return 0;
+
+	prop = fdt_getprop(dtb, root_offset, "qcom,msm-id", &len);
+	if (!prop || len <= 0) {
+		printf("DTB: qcom,msm-id entry not found\n");
+		return 0;
+	} else if (len < (int)sizeof(struct msm_id)) {
+		printf("DTB: qcom,msm-id entry size mismatch (%d != %d)\n",
+			len, sizeof(struct msm_id));
+		return 0;
+	}
+	msm_id.platform_id = fdt32_to_cpu(((const struct msm_id *)prop)->platform_id);
+	msm_id.hardware_id = fdt32_to_cpu(((const struct msm_id *)prop)->hardware_id);
+	msm_id.soc_rev = fdt32_to_cpu(((const struct msm_id *)prop)->soc_rev);
+
+	if (msm_id.platform_id != devid->platform_id ||
+		msm_id.hardware_id != devid->hardware_id) {
+		return INVALID_SOC_REV_ID;
+	}
+
+	return msm_id.soc_rev;
+}
+
+static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf, off_t *dtb_length)
+{
+	uint32_t app_dtb_offset = 0;
+	char *kernel_end = (char*)kernel + kernel_len;
+	char *dtb;
+	FILE *f;
+	struct msm_id devid;
+	char *bestmatch_tag = NULL;
+	uint32_t bestmatch_tag_size;
+	uint32_t bestmatch_soc_rev_id = INVALID_SOC_REV_ID;
+
+	f = fopen("/proc/device-tree/qcom,msm-id", "r");
+	if(!f)
+	{
+		fprintf(stderr, "DTB: Couldn't open /proc/device-tree/qcom,msm-id!\n");
+		return 0;
+	}
+
+	fread(&devid, sizeof(struct msm_id), 1, f);
+	fclose(f);
+
+	devid.platform_id = fdt32_to_cpu(devid.platform_id);
+	devid.hardware_id = fdt32_to_cpu(devid.hardware_id);
+	devid.soc_rev = fdt32_to_cpu(devid.soc_rev);
+
+	printf("DTB: platform %u hw %u soc 0x%x\n", devid.platform_id, devid.hardware_id, devid.soc_rev);
+
+	memcpy((void*) &app_dtb_offset, (void*) (kernel + DTB_OFFSET), sizeof(uint32_t));
+
+	dtb = (char*)kernel + app_dtb_offset;
+	while(dtb + sizeof(struct fdt_header) < kernel_end)
+	{
+		uint32_t dtb_soc_rev_id;
+		struct fdt_header dtb_hdr;
+		uint32_t dtb_size;
+
+		/* the DTB could be unaligned, so extract the header,
+		 * and operate on it separately */
+		memcpy(&dtb_hdr, dtb, sizeof(struct fdt_header));
+		if (fdt_check_header((const void *)&dtb_hdr) != 0 ||
+		    (dtb + fdt_totalsize((const void *)&dtb_hdr) > kernel_end))
+			break;
+		dtb_size = fdt_totalsize(&dtb_hdr);
+
+		dtb_soc_rev_id = dtb_compatible(dtb, &devid);
+		if (dtb_soc_rev_id == devid.soc_rev) {
+			*dtb_buf = xmalloc(dtb_size);
+			memcpy(*dtb_buf, dtb, dtb_size);
+			*dtb_length = dtb_size;
+			printf("DTB: match 0x%x, my id 0x%x, len %u\n", dtb_soc_rev_id, devid.soc_rev, dtb_size);
+			return 1;
+		} else if ((dtb_soc_rev_id != INVALID_SOC_REV_ID) &&
+				   (dtb_soc_rev_id < devid.soc_rev)) {
+			/* if current bestmatch is less than new dtb_soc_rev_id then update
+			   bestmatch_tag */
+			if((bestmatch_soc_rev_id == INVALID_SOC_REV_ID) ||
+			   (bestmatch_soc_rev_id < dtb_soc_rev_id)) {
+				bestmatch_tag = dtb;
+				bestmatch_tag_size = dtb_size;
+				bestmatch_soc_rev_id = dtb_soc_rev_id;
+			}
+		}
+
+		/* goto the next device tree if any */
+		dtb += dtb_size;
+	}
+
+	if(bestmatch_tag) {
+		printf("DTB: bestmatch 0x%x, my id 0x%x\n", bestmatch_soc_rev_id, devid.soc_rev);
+		*dtb_buf = xmalloc(bestmatch_tag_size);
+		memcpy(*dtb_buf, bestmatch_tag, bestmatch_tag_size);
+		*dtb_length = bestmatch_tag_size;
+		return 1;
+	}
+	return 0;
+}
+
+int dtb_add_memory_reg(void *dtb_buf, int off)
+{
+	FILE *f;
+	uint32_t reg;
+	int res;
+
+	f = fopen("/proc/device-tree/memory/reg", "r");
+	if(!f)
+	{
+		fprintf(stderr, "DTB: Failed to open /proc/device-tree/memory/reg!\n");
+		return 0;
+	}
+
+	fdt_delprop(dtb_buf, off, "reg");
+
+	while(fread(&reg, sizeof(reg), 1, f) == 1)
+		fdt_appendprop(dtb_buf, off, "reg", &reg, sizeof(reg));
+
+	fclose(f);
+	return 1;
+}
+
 int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 	struct kexec_info *info)
 {
 	unsigned long base;
 	unsigned int atag_offset = 0x1000; /* 4k offset from memory start */
 	unsigned int offset = 0x8000;      /* 32k offset from memory start */
+	unsigned int opt_ramdisk_addr;
+	unsigned int opt_atags_addr;
 	const char *command_line;
 	char *modified_cmdline = NULL;
 	off_t command_line_len;
 	const char *ramdisk;
 	char *ramdisk_buf;
-	off_t ramdisk_length;
-	off_t ramdisk_offset;
 	int opt;
+	char *endptr;
+	int use_dtb;
+	char *dtb_buf;
+	off_t dtb_length;
+	char *dtb_file;
+	off_t dtb_offset;
 	/* See options.h -- add any more there, too. */
 	static const struct option options[] = {
 		KEXEC_ARCH_OPTIONS
@@ -269,9 +426,12 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 		{ "append",		1, 0, OPT_APPEND },
 		{ "initrd",		1, 0, OPT_RAMDISK },
 		{ "ramdisk",		1, 0, OPT_RAMDISK },
+		{ "dtb",		0, 0, OPT_DTB },
+		{ "rd-addr",		1, 0, OPT_RD_ADDR },
+		{ "atags-addr",		1, 0, OPT_ATAGS_ADDR },
 		{ 0, 			0, 0, 0 },
 	};
-	static const char short_options[] = KEXEC_ARCH_OPT_STR "a:r:";
+	static const char short_options[] = KEXEC_ARCH_OPT_STR "a:r:di:g:";
 
 	/*
 	 * Parse the command line arguments
@@ -280,7 +440,9 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 	command_line_len = 0;
 	ramdisk = 0;
 	ramdisk_buf = 0;
-	ramdisk_length = 0;
+	use_dtb = 0;
+	opt_ramdisk_addr = 0;
+	opt_atags_addr = 0;
 	while((opt = getopt_long(argc, argv, short_options, options, 0)) != -1) {
 		switch(opt) {
 		default:
@@ -297,6 +459,29 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 		case OPT_RAMDISK:
 			ramdisk = optarg;
 			break;
+		case OPT_DTB:
+			use_dtb = 1;
+			break;
+		case OPT_RD_ADDR:
+			opt_ramdisk_addr = strtoul(optarg, &endptr, 0);
+			if (*endptr) {
+				fprintf(stderr,
+					"Bad option value in --rd-addr=%s\n",
+					optarg);
+				usage();
+				return 1;
+			}
+			break;
+		case OPT_ATAGS_ADDR:
+			opt_atags_addr = strtoul(optarg, &endptr, 0);
+			if (*endptr) {
+				fprintf(stderr,
+					"Bad option value in --atag-addr=%s\n",
+					optarg);
+				usage();
+				return 1;
+			}
+			break;
 		}
 	}
 	if (command_line) {
@@ -305,7 +490,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 			command_line_len = COMMAND_LINE_SIZE;
 	}
 	if (ramdisk) {
-		ramdisk_buf = slurp_file(ramdisk, &ramdisk_length);
+		ramdisk_buf = slurp_file(ramdisk, &initrd_size);
 	}
 
 	/*
@@ -355,12 +540,118 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 	/* assume the maximum kernel compression ratio is 4,
 	 * and just to be safe, place ramdisk after that
 	 */
-	ramdisk_offset = base + len * 4;
+	if(opt_ramdisk_addr == 0)
+		initrd_base = _ALIGN(base + len * 4, getpagesize());
+	else
+		initrd_base = opt_ramdisk_addr;
 
-	if (atag_arm_load(info, base + atag_offset,
-			 command_line, command_line_len,
-			 ramdisk_buf, ramdisk_length, ramdisk_offset) == -1)
-		return -1;
+	if(!use_dtb)
+	{
+		if (atag_arm_load(info, base + atag_offset,
+				command_line, command_line_len,
+				ramdisk_buf, initrd_size, initrd_base) == -1)
+			return -1;
+	}
+	else
+	{
+		if(get_appended_dtb(buf, len, &dtb_buf, &dtb_length))
+		{
+			int ret, off;
+
+			printf("DTB: Using DTB appended to zImage\n");
+
+			dtb_length = fdt_totalsize(dtb_buf) + DTB_PAD_SIZE;
+			dtb_buf = xrealloc(dtb_buf, dtb_length);
+			ret = fdt_open_into(dtb_buf, dtb_buf, dtb_length);
+			if(ret)
+				die("DTB: fdt_open_into failed");
+
+			ret = fdt_path_offset(dtb_buf, "/memory");
+			if (ret >= 0)
+				dtb_add_memory_reg(dtb_buf, ret);
+			else
+				fprintf(stderr, "DTB: Could not find memory node.\n");
+
+			if (command_line) {
+				const char *node_name = "/chosen";
+				const char *prop_name = "bootargs";
+
+				/* check if a /choosen subnode already exists */
+				off = fdt_path_offset(dtb_buf, node_name);
+
+				if (off == -FDT_ERR_NOTFOUND)
+					off = fdt_add_subnode(dtb_buf, off, node_name);
+
+				if (off < 0) {
+					fprintf(stderr, "DTB: Error adding %s node.\n", node_name);
+					return -1;
+				}
+
+				if (fdt_setprop(dtb_buf, off, prop_name,
+						command_line, strlen(command_line) + 1) != 0) {
+					fprintf(stderr, "DTB: Error setting %s/%s property.\n",
+						node_name, prop_name);
+					return -1;
+				}
+			}
+
+			if(ramdisk)
+			{
+				const char *node_name = "/chosen";
+				uint32_t initrd_start, initrd_end;
+
+				/* check if a /choosen subnode already exists */
+				off = fdt_path_offset(dtb_buf, node_name);
+
+				if (off == -FDT_ERR_NOTFOUND)
+					off = fdt_add_subnode(dtb_buf, off, node_name);
+
+				if (off < 0) {
+					fprintf(stderr, "DTB: Error adding %s node.\n", node_name);
+					return -1;
+				}
+
+				initrd_start = cpu_to_fdt32(initrd_base);
+				initrd_end = cpu_to_fdt32(initrd_base + initrd_size);
+
+				ret = fdt_setprop(dtb_buf, off, "linux,initrd-start", &initrd_start, sizeof(initrd_start));
+				if (ret)
+					die("DTB: Error setting %s/linux,initrd-start property.\n", node_name);
+
+				ret = fdt_setprop(dtb_buf, off, "linux,initrd-end", &initrd_end, sizeof(initrd_end));
+				if (ret)
+					die("DTB: Error setting %s/linux,initrd-end property.\n", node_name);
+			}
+
+			fdt_pack(dtb_buf);
+		}
+		else
+		{
+			/*
+			* Extract the DTB from /proc/device-tree.
+			*/
+			printf("DTB: Using /proc/device-tree\n");
+			create_flatten_tree(&dtb_buf, &dtb_length, command_line);
+		}
+
+		if(ramdisk)
+		{
+			add_segment(info, ramdisk_buf, initrd_size, initrd_base,
+				initrd_size);
+		}
+
+		if(opt_atags_addr != 0)
+			dtb_offset = opt_atags_addr;
+		else
+		{
+			dtb_offset = initrd_base + initrd_size + getpagesize();
+			dtb_offset = _ALIGN_DOWN(dtb_offset, getpagesize());
+		}
+
+		printf("DTB: add dtb segment 0x%x\n", (unsigned int)dtb_offset);
+		add_segment(info, dtb_buf, dtb_length,
+		            dtb_offset, dtb_length);
+	}
 
 	add_segment(info, buf, len, base + offset, len);
 

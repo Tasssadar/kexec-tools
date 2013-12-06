@@ -57,6 +57,10 @@
 #error unknwon BYTE_ORDER
 #endif
 
+#define __ALIGN_MASK(x,mask)    (((x)+(mask))&~(mask))
+#define _ALIGN(x,a)              __ALIGN_MASK(x,(typeof(x))(a)-1)
+#define _ALIGN_DOWN(x, a)	((x) & ~((typeof(x))(a) - 1))
+
 
 /*
  * This function doesn't actually exist.  The idea is that when someone
