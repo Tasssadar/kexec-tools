@@ -266,13 +266,13 @@ struct msm_id
 	uint32_t platform_id;
 	uint32_t hardware_id;
 	uint32_t soc_rev;
+	uint32_t board_rev;
 };
 
-static uint32_t dtb_compatible(void *dtb, struct msm_id *devid)
+static uint32_t dtb_compatible(void *dtb, struct msm_id *devid, struct msm_id *dtb_id)
 {
 	int root_offset;
 	const void *prop;
-	struct msm_id msm_id;
 	int len;
 
 	root_offset = fdt_path_offset(dtb, "/");
@@ -288,16 +288,18 @@ static uint32_t dtb_compatible(void *dtb, struct msm_id *devid)
 			len, sizeof(struct msm_id));
 		return 0;
 	}
-	msm_id.platform_id = fdt32_to_cpu(((const struct msm_id *)prop)->platform_id);
-	msm_id.hardware_id = fdt32_to_cpu(((const struct msm_id *)prop)->hardware_id);
-	msm_id.soc_rev = fdt32_to_cpu(((const struct msm_id *)prop)->soc_rev);
 
-	if (msm_id.platform_id != devid->platform_id ||
-		msm_id.hardware_id != devid->hardware_id) {
-		return INVALID_SOC_REV_ID;
+	dtb_id->platform_id = fdt32_to_cpu(((const struct msm_id *)prop)->platform_id);
+	dtb_id->hardware_id = fdt32_to_cpu(((const struct msm_id *)prop)->hardware_id);
+	dtb_id->soc_rev = fdt32_to_cpu(((const struct msm_id *)prop)->soc_rev);
+	dtb_id->board_rev = fdt32_to_cpu(((const struct msm_id *)prop)->board_rev);
+
+	if (dtb_id->platform_id != devid->platform_id ||
+		dtb_id->hardware_id != devid->hardware_id) {
+		return 0;
 	}
 
-	return msm_id.soc_rev;
+	return 1;
 }
 
 static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf, off_t *dtb_length)
@@ -306,10 +308,11 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 	char *kernel_end = (char*)kernel + kernel_len;
 	char *dtb;
 	FILE *f;
-	struct msm_id devid;
+	struct msm_id devid, dtb_id;
 	char *bestmatch_tag = NULL;
 	uint32_t bestmatch_tag_size;
 	uint32_t bestmatch_soc_rev_id = INVALID_SOC_REV_ID;
+	uint32_t bestmatch_board_rev_id = INVALID_SOC_REV_ID;
 
 	f = fopen("/proc/device-tree/qcom,msm-id", "r");
 	if(!f)
@@ -324,8 +327,10 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 	devid.platform_id = fdt32_to_cpu(devid.platform_id);
 	devid.hardware_id = fdt32_to_cpu(devid.hardware_id);
 	devid.soc_rev = fdt32_to_cpu(devid.soc_rev);
+	devid.board_rev = fdt32_to_cpu(devid.board_rev);
 
-	printf("DTB: platform %u hw %u soc 0x%x\n", devid.platform_id, devid.hardware_id, devid.soc_rev);
+	printf("DTB: platform %u hw %u soc 0x%x board %u\n",
+			devid.platform_id, devid.hardware_id, devid.soc_rev, devid.board_rev);
 
 	memcpy((void*) &app_dtb_offset, (void*) (kernel + DTB_OFFSET), sizeof(uint32_t));
 
@@ -344,22 +349,32 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 			break;
 		dtb_size = fdt_totalsize(&dtb_hdr);
 
-		dtb_soc_rev_id = dtb_compatible(dtb, &devid);
-		if (dtb_soc_rev_id == devid.soc_rev) {
-			*dtb_buf = xmalloc(dtb_size);
-			memcpy(*dtb_buf, dtb, dtb_size);
-			*dtb_length = dtb_size;
-			printf("DTB: match 0x%x, my id 0x%x, len %u\n", dtb_soc_rev_id, devid.soc_rev, dtb_size);
-			return 1;
-		} else if ((dtb_soc_rev_id != INVALID_SOC_REV_ID) &&
-				   (dtb_soc_rev_id < devid.soc_rev)) {
-			/* if current bestmatch is less than new dtb_soc_rev_id then update
-			   bestmatch_tag */
-			if((bestmatch_soc_rev_id == INVALID_SOC_REV_ID) ||
-			   (bestmatch_soc_rev_id < dtb_soc_rev_id)) {
-				bestmatch_tag = dtb;
-				bestmatch_tag_size = dtb_size;
-				bestmatch_soc_rev_id = dtb_soc_rev_id;
+		if(dtb_compatible(dtb, &devid, &dtb_id))
+		{
+			if (dtb_id.soc_rev == devid.soc_rev &&
+				dtb_id.board_rev == devid.board_rev)
+			{
+				*dtb_buf = xmalloc(dtb_size);
+				memcpy(*dtb_buf, dtb, dtb_size);
+				*dtb_length = dtb_size;
+				printf("DTB: match 0x%x %u, my id 0x%x %u, len %u\n",
+						dtb_id.soc_rev, dtb_id.board_rev,
+						devid.soc_rev, devid.board_rev, dtb_size);
+				return 1;
+			}
+			else if(dtb_id.soc_rev <= devid.soc_rev &&
+					dtb_id.board_rev < devid.board_rev)
+			{
+				if((bestmatch_soc_rev_id == INVALID_SOC_REV_ID) ||
+					(bestmatch_soc_rev_id < dtb_id.soc_rev) ||
+					(bestmatch_soc_rev_id == dtb_id.soc_rev &&
+					bestmatch_board_rev_id < dtb_id.board_rev))
+				{
+					bestmatch_tag = dtb;
+					bestmatch_tag_size = dtb_size;
+					bestmatch_soc_rev_id = dtb_id.soc_rev;
+					bestmatch_board_rev_id = dtb_id.board_rev;
+				}
 			}
 		}
 
@@ -368,7 +383,9 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 	}
 
 	if(bestmatch_tag) {
-		printf("DTB: bestmatch 0x%x, my id 0x%x\n", bestmatch_soc_rev_id, devid.soc_rev);
+		printf("DTB: bestmatch 0x%x %u, my id 0x%x %u\n",
+				bestmatch_soc_rev_id, bestmatch_board_rev_id,
+				devid.soc_rev, devid.board_rev);
 		*dtb_buf = xmalloc(bestmatch_tag_size);
 		memcpy(*dtb_buf, bestmatch_tag, bestmatch_tag_size);
 		*dtb_length = bestmatch_tag_size;
