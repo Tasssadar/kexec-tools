@@ -101,8 +101,8 @@ void zImage_arm_usage(void)
 		"     --append=STRING       Set the kernel command line to STRING.\n"
 		"     --initrd=FILE         Use FILE as the kernel's initial ramdisk.\n"
 		"     --ramdisk=FILE        Use FILE as the kernel's initial ramdisk.\n"
-		"     --dtb                 Load dtb from zImage or /proc/device-tree instead of using atags.\n"
-		"                           DTB appended to zImage currently only works on MSM devices.\n"
+		"     --dtb(=dtb.img)       Load dtb from zImage, dtb.img or /proc/device-tree instead of using atags.\n"
+		"                           DTB appended to zImage and dtb.img currently only works on MSM devices.\n"
 		"     --rd-addr=<addr>      Address to load initrd to.\n"
 		"     --atags-addr=<addr>   Address to load atags/dtb to.\n"
 		);
@@ -277,7 +277,10 @@ static uint32_t dtb_compatible(void *dtb, struct msm_id *devid, struct msm_id *d
 
 	root_offset = fdt_path_offset(dtb, "/");
 	if (root_offset < 0)
+	{
+		fprintf(stderr, "DTB: Couldn't find root path in dtb!\n");
 		return 0;
+	}
 
 	prop = fdt_getprop(dtb, root_offset, "qcom,msm-id", &len);
 	if (!prop || len <= 0) {
@@ -294,6 +297,9 @@ static uint32_t dtb_compatible(void *dtb, struct msm_id *devid, struct msm_id *d
 	dtb_id->soc_rev = fdt32_to_cpu(((const struct msm_id *)prop)->soc_rev);
 	dtb_id->board_rev = fdt32_to_cpu(((const struct msm_id *)prop)->board_rev);
 
+	//printf("DTB: found dtb platform %u hw %u soc 0x%x board %u\n",
+	//		dtb_id->platform_id, dtb_id->hardware_id, dtb_id->soc_rev, dtb_id->board_rev);
+
 	if (dtb_id->platform_id != devid->platform_id ||
 		dtb_id->hardware_id != devid->hardware_id) {
 		return 0;
@@ -302,11 +308,84 @@ static uint32_t dtb_compatible(void *dtb, struct msm_id *devid, struct msm_id *d
 	return 1;
 }
 
-static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf, off_t *dtb_length)
+static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_img, off_t *dtb_img_len)
 {
 	uint32_t app_dtb_offset = 0;
 	char *kernel_end = (char*)kernel + kernel_len;
 	char *dtb;
+
+	memcpy((void*) &app_dtb_offset, (void*) (kernel + DTB_OFFSET), sizeof(uint32_t));
+
+	dtb = (char*)kernel + app_dtb_offset;
+	if(dtb >= kernel_end)
+	{
+		fprintf(stderr, "DTB: Failed to load dtb appended to zImage, invalid offset!");
+		return 0;
+	}
+
+	*dtb_img = dtb;
+	*dtb_img_len = kernel_end - dtb;
+	return 1;
+}
+
+static int load_dtb_image(const char *path, char **dtb_img, off_t *dtb_img_len)
+{
+	int fd;
+	struct stat info;
+	char buff[4];
+	char *img = NULL;
+	off_t size;
+
+	if(stat(path, &info) < 0)
+	{
+		fprintf(stderr, "DTB: Failed to stat() dtb image %s\n", path);
+		return 0;
+	}
+
+	if(info.st_size <= 2048)
+	{
+		fprintf(stderr, "DTB: invalid dtb image (too small) %s\n", path);
+		return 0;
+	}
+
+	fd = open(path, O_RDONLY);
+	if(fd < 0)
+	{
+		fprintf(stderr, "DTB: Failed to open dtb image %s\n", path);
+		return 0;
+	}
+
+	if(read(fd, buff, 4) != 4 || strncmp(buff, "QCDT", 4) != 0)
+	{
+		fprintf(stderr, "DTB: Invalid dtb image header in %s\n", path);
+		close(fd);
+		return 0;
+	}
+
+	// skip header
+	size = info.st_size - 2048;
+	lseek(fd, 2048, SEEK_SET);
+
+	img = xmalloc(size);
+	if(read(fd, img, size) != size)
+	{
+		fprintf(stderr, "Failed to read %lld bytes from dtb image %s\n", size, path);
+		free(img);
+		close(fd);
+		return 0;
+	}
+
+	*dtb_img = img;
+	*dtb_img_len = size;
+
+	close(fd);
+	return 1;
+}
+
+static int choose_dtb(const char *dtb_img, off_t dtb_len, char **dtb_buf, off_t *dtb_length)
+{
+	char *dtb = (char*)dtb_img;
+	char *dtb_end = dtb + dtb_len;
 	FILE *f;
 	struct msm_id devid, dtb_id;
 	char *bestmatch_tag = NULL;
@@ -332,10 +411,7 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 	printf("DTB: platform %u hw %u soc 0x%x board %u\n",
 			devid.platform_id, devid.hardware_id, devid.soc_rev, devid.board_rev);
 
-	memcpy((void*) &app_dtb_offset, (void*) (kernel + DTB_OFFSET), sizeof(uint32_t));
-
-	dtb = (char*)kernel + app_dtb_offset;
-	while(dtb + sizeof(struct fdt_header) < kernel_end)
+	while(dtb + sizeof(struct fdt_header) < dtb_end)
 	{
 		uint32_t dtb_soc_rev_id;
 		struct fdt_header dtb_hdr;
@@ -345,8 +421,11 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 		 * and operate on it separately */
 		memcpy(&dtb_hdr, dtb, sizeof(struct fdt_header));
 		if (fdt_check_header((const void *)&dtb_hdr) != 0 ||
-		    (dtb + fdt_totalsize((const void *)&dtb_hdr) > kernel_end))
+		    (dtb + fdt_totalsize((const void *)&dtb_hdr) > dtb_end))
+		{
+			fprintf(stderr, "DTB: Invalid dtb header!\n");
 			break;
+		}
 		dtb_size = fdt_totalsize(&dtb_hdr);
 
 		if(dtb_compatible(dtb, &devid, &dtb_id))
@@ -380,6 +459,10 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 
 		/* goto the next device tree if any */
 		dtb += dtb_size;
+
+		// try to skip padding in standalone dtb.img files
+		while(dtb < dtb_end && *dtb == 0)
+			++dtb;
 	}
 
 	if(bestmatch_tag) {
@@ -391,6 +474,7 @@ static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_buf
 		*dtb_length = bestmatch_tag_size;
 		return 1;
 	}
+
 	return 0;
 }
 
@@ -432,9 +516,9 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 	int opt;
 	char *endptr;
 	int use_dtb;
+	const char *dtb_file;
 	char *dtb_buf;
 	off_t dtb_length;
-	char *dtb_file;
 	off_t dtb_offset;
 	/* See options.h -- add any more there, too. */
 	static const struct option options[] = {
@@ -443,12 +527,12 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 		{ "append",		1, 0, OPT_APPEND },
 		{ "initrd",		1, 0, OPT_RAMDISK },
 		{ "ramdisk",		1, 0, OPT_RAMDISK },
-		{ "dtb",		0, 0, OPT_DTB },
+		{ "dtb",		2, 0, OPT_DTB },
 		{ "rd-addr",		1, 0, OPT_RD_ADDR },
 		{ "atags-addr",		1, 0, OPT_ATAGS_ADDR },
 		{ 0, 			0, 0, 0 },
 	};
-	static const char short_options[] = KEXEC_ARCH_OPT_STR "a:r:di:g:";
+	static const char short_options[] = KEXEC_ARCH_OPT_STR "a:r:d::i:g:";
 
 	/*
 	 * Parse the command line arguments
@@ -458,6 +542,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 	ramdisk = 0;
 	ramdisk_buf = 0;
 	use_dtb = 0;
+	dtb_file = NULL;
 	opt_ramdisk_addr = 0;
 	opt_atags_addr = 0;
 	while((opt = getopt_long(argc, argv, short_options, options, 0)) != -1) {
@@ -478,6 +563,8 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 			break;
 		case OPT_DTB:
 			use_dtb = 1;
+			if(optarg)
+				dtb_file = optarg;
 			break;
 		case OPT_RD_ADDR:
 			opt_ramdisk_addr = strtoul(optarg, &endptr, 0);
@@ -571,11 +658,35 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 	}
 	else
 	{
-		if(get_appended_dtb(buf, len, &dtb_buf, &dtb_length))
+		char *dtb_img = NULL;
+		off_t dtb_img_len = 0;
+		int free_dtb_img = 0;
+		int choose_res = 0;
+
+		if(dtb_file)
 		{
-			int ret, off;
+			if(!load_dtb_image(dtb_file, &dtb_img, &dtb_img_len))
+				return -1;
+
+			printf("DTB: Using DTB from file %s\n", dtb_file);
+			free_dtb_img = 1;
+		}
+		else
+		{
+			if(!get_appended_dtb(buf, len, &dtb_img, &dtb_img_len))
+				return -1;
 
 			printf("DTB: Using DTB appended to zImage\n");
+		}
+
+		choose_res = choose_dtb(dtb_img, dtb_img_len, &dtb_buf, &dtb_length);
+
+		if(free_dtb_img)
+			free(dtb_img);
+
+		if(choose_res)
+		{
+			int ret, off;
 
 			dtb_length = fdt_totalsize(dtb_buf) + DTB_PAD_SIZE;
 			dtb_buf = xrealloc(dtb_buf, dtb_length);
@@ -647,7 +758,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 			/*
 			* Extract the DTB from /proc/device-tree.
 			*/
-			printf("DTB: Using /proc/device-tree\n");
+			printf("DTB: Failed to load dtb from zImage or dtb.img, using /proc/device-tree\n");
 			create_flatten_tree(&dtb_buf, &dtb_length, command_line);
 		}
 
