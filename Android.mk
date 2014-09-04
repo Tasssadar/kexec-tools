@@ -1,7 +1,7 @@
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
-LOCAL_MODULE                  := kdump_static
+LOCAL_MODULE                  := mrom_kdump_static
 LOCAL_MODULE_TAGS             := optional
 LOCAL_C_INCLUDES              := $(LOCAL_PATH)/include
 LOCAL_SRC_FILES               := kdump/kdump.c
@@ -10,14 +10,14 @@ LOCAL_STATIC_LIBRARIES        := libc
 include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
-LOCAL_MODULE      := libutil_kt
+LOCAL_MODULE      := mrom_libutil_kt
 LOCAL_MODULE_TAGS := optional
 LOCAL_C_INCLUDES  := $(LOCAL_PATH)/util_lib/include
 LOCAL_SRC_FILES   := util_lib/compute_ip_checksum.c util_lib/sha256.c
 include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
-LOCAL_MODULE                  := kexec_static
+LOCAL_MODULE                  := mrom_kexec_static
 LOCAL_MODULE_TAGS             := optional
 LOCAL_C_INCLUDES              := $(LOCAL_PATH)/include \
                                  $(LOCAL_PATH)/util_lib/include \
@@ -50,5 +50,7 @@ LOCAL_SRC_FILES               := kexec/kexec.c kexec/ifdown.c \
                                  kexec/libfdt/fdt_rw.c kexec/libfdt/fdt_strerror.c \
                                  kexec/libfdt/fdt_sw.c kexec/libfdt/fdt_wip.c
 LOCAL_FORCE_STATIC_EXECUTABLE := true
-LOCAL_STATIC_LIBRARIES        := libutil_kt libz libc
+LOCAL_STATIC_LIBRARIES        := mrom_libutil_kt libz libc
+LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
+LOCAL_UNSTRIPPED_PATH := $(TARGET_OUT_EXECUTABLES_UNSTRIPPED)
 include $(BUILD_EXECUTABLE)
