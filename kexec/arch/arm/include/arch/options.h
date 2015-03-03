@@ -4,6 +4,7 @@
 #define OPT_ARCH_MAX   (OPT_MAX+0)
 
 #define OPT_APPEND	'a'
+#define OPT_BOARDNAME 'b'
 #define OPT_RAMDISK	'r'
 #define OPT_DTB	'd'
 #define OPT_RD_ADDR 'i'
@@ -40,7 +41,8 @@
 	{ "dtb",		2, 0, OPT_DTB }, \
 	{ "rd-addr",	1, 0, OPT_RD_ADDR }, \
 	{ "atags-addr",	1, 0, OPT_ATAGS_ADDR }, \
+	{ "boardname",  1, 0, OPT_BOARDNAME }, \
 
-#define KEXEC_ALL_OPT_STR KEXEC_ARCH_OPT_STR "a:r:d::i:g:"
+#define KEXEC_ALL_OPT_STR KEXEC_ARCH_OPT_STR "a:r:d::i:g:b:"
 
 #endif /* KEXEC_ARCH_ARM_OPTIONS_H */
