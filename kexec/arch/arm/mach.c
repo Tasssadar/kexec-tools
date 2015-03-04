@@ -2,8 +2,10 @@
 #include "mach.h"
 
 extern const struct arch_mach arm_mach_hammerhead;
+extern const struct arch_mach arm_mach_shamu;
 static const struct arm_mach *const arm_machs[] = {
     &arm_mach_hammerhead,
+    &arm_mach_shamu,
     NULL
 };
 // update zImage_arm_usage when modifying this.
