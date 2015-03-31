@@ -197,7 +197,7 @@ static int shamu_add_extra_regs(void *dtb_buf)
 
     while((dt = readdir(d)))
     {
-        if(dt->d_type != DT_REG, strncmp(dt->d_name, "mmi,", 4) != 0)
+        if(dt->d_type != DT_REG || strncmp(dt->d_name, "mmi,", 4) != 0)
             continue;
 
         if(shamu_copy_prop(dtb_buf, "/chosen", dt->d_name) < 0)
