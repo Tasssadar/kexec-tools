@@ -413,7 +413,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 					"Bad option value in --rd-addr=%s\n",
 					optarg);
 				usage();
-				return 1;
+				return -1;
 			}
 			break;
 		case OPT_ATAGS_ADDR:
@@ -423,7 +423,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 					"Bad option value in --atag-addr=%s\n",
 					optarg);
 				usage();
-				return 1;
+				return -1;
 			}
 			break;
 		case OPT_BOARDNAME:
@@ -431,7 +431,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 			if(!mach)
 			{
 				fprintf(stderr, "Unknown boardname '%s'!\n", optarg);
-				return 1;
+				return -1;
 			}
 			break;
 		}
