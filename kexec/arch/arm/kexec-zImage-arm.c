@@ -104,7 +104,7 @@ void zImage_arm_usage(void)
 		"     --ramdisk=FILE        Use FILE as the kernel's initial ramdisk.\n"
 		"     --dtb(=dtb.img)       Load dtb from zImage, dtb.img or /proc/device-tree instead of using atags.\n"
 		"                           DTB appended to zImage and dtb.img currently only works on MSM devices.\n"
-		"     --boardname=NAME      Required if using DTB. Options: hammerhead\n"
+		"     --boardname=NAME      Required if using DTB. Options: hammerhead bacon d851 shamu\n"
 		"     --rd-addr=<addr>      Address to load initrd to.\n"
 		"     --atags-addr=<addr>   Address to load atags/dtb to.\n"
 		);
