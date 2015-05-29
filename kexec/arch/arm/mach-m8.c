@@ -237,7 +237,7 @@ static int m8_add_extra_regs(void *dtb_buf)
     }
     return 0;
 }
-//htc m8
+
 const char *chosenConfigProps[][6] = { "bootloaderflag", "kernelflag",
             "radioflag", "radioflag_ex2", "debugflag", "radioflag_ex1"};
 const char *calibrationProps[][13] = { "als_flash", "bs_flash", "bt_flash",
@@ -391,11 +391,9 @@ char *dtb_get_model()
 
     return model;
 }
-//end htc m8
-
 
 const struct arm_mach arm_mach_m8 = {
-    .boardnames = { "m8", "hammerhead", "bacon", "d851", NULL },
+    .boardnames = { "m8", NULL },
     .choose_dtb = m8_choose_dtb,
     .add_extra_regs = m8_add_extra_regs,
 };
