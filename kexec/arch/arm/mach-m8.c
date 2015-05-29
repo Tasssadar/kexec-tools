@@ -368,30 +368,6 @@ int dtb_add_htc_m8_specific(void *dtb_buf)
     return 0;
 }
 
-char *dtb_get_model()
-{
-    FILE *f;
-    char modelpath[50];
-    char *model = (char*)malloc(50);
-    int cnt;
-
-    sprintf(modelpath, "/proc/device-tree/model");
-
-    f = fopen(modelpath, "r");
-    if(!f)
-    {
-        fprintf(stderr, "DTB: Failed to open %s!\n", modelpath);
-        return 0;
-    }
-
-    cnt = fread(model, 1, 50, f);
-    model[cnt] = 0;
-
-    fclose(f);
-
-    return model;
-}
-
 const struct arm_mach arm_mach_m8 = {
     .boardnames = { "m8", NULL },
     .choose_dtb = m8_choose_dtb,
