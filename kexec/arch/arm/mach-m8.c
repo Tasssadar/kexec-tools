@@ -56,7 +56,7 @@ static int m8_choose_dtb(const char *dtb_img, off_t dtb_len, char **dtb_buf, off
     FILE *f;
     struct htc_project_id htcid_dev, htcid_dtb, htcid_best;
     char *bestmatch_tag = NULL;
-    uint32_t bestmatch_tag_size;
+    uint32_t bestmatch_tag_size = 0;
     int ignore_pid = 0;
 
     f = fopen("/proc/device-tree/htc,project-id", "r");
@@ -78,9 +78,9 @@ static int m8_choose_dtb(const char *dtb_img, off_t dtb_len, char **dtb_buf, off
 scan_dtb:
     dtb = (char*)dtb_img;
     bestmatch_tag = NULL;
-    htcid_best.pid = INVALID_SOC_REV_ID;
-    htcid_best.pcbid = INVALID_SOC_REV_ID;
-    htcid_best.socver = INVALID_SOC_REV_ID;
+
+    memset(&htcid_dtb, 0xFF, sizeof(struct htc_project_id));
+    memset(&htcid_best, 0xFF, sizeof(struct htc_project_id));
 
     while(dtb + sizeof(struct fdt_header) < dtb_end)
     {
@@ -157,42 +157,6 @@ scan_dtb:
     return 0;
 }
 
-static int m8_add_extra_regs(void *dtb_buf)
-{
-    FILE *f;
-    uint32_t reg;
-    int res;
-    int off;
-
-    off = fdt_path_offset(dtb_buf, "/memory");
-    if (off < 0)
-    {
-        fprintf(stderr, "DTB: Could not find memory node.\n");
-        return -1;
-    }
-
-    f = fopen("/proc/device-tree/memory/reg", "r");
-    if(!f)
-    {
-        fprintf(stderr, "DTB: Failed to open /proc/device-tree/memory/reg!\n");
-        return -1;
-    }
-
-    fdt_delprop(dtb_buf, off, "reg");
-
-    while(fread(&reg, sizeof(reg), 1, f) == 1)
-        fdt_appendprop(dtb_buf, off, "reg", &reg, sizeof(reg));
-
-    fclose(f);
-
-    if(dtb_add_htc_m8_specific(dtb_buf) < 0)
-    {
-        fprintf(stderr, "DTB: Failed to add m8 specifics!\n");
-        return -1;
-    }
-    return 0;
-}
-
 static const char *chosenConfigProps[][6] = { "bootloaderflag", "kernelflag",
             "radioflag", "radioflag_ex2", "debugflag", "radioflag_ex1"};
 static const char *calibrationProps[][13] = { "als_flash", "bs_flash", "bt_flash",
@@ -201,7 +165,7 @@ static const char *calibrationProps[][13] = { "als_flash", "bs_flash", "bt_flash
             "ws_flash"};
 static const char *htc_workaround_reserve_leading_pagesProps[2] = { "compatible",
             "qcom,memblock-reserve"};
-int dtb_add_htc_projectid(void *dtb_buf, int off)
+static int dtb_add_htc_projectid(void *dtb_buf, int off)
 {
     FILE *f;
     uint32_t reg;
@@ -223,7 +187,7 @@ int dtb_add_htc_projectid(void *dtb_buf, int off)
     return 1;
 }
 
-int dtb_add_property(void *dtb_buf, int off, char *path, char *property)
+static int dtb_add_property(void *dtb_buf, int off, char *path, char *property)
 {
     FILE *f;
     uint32_t reg;
@@ -246,7 +210,7 @@ int dtb_add_property(void *dtb_buf, int off, char *path, char *property)
     return 1;
 }
 
-int dtb_add_properties_recursive(void *dtb_buf, int off, char *path, char **properties, int nrprops)
+static int dtb_add_properties_recursive(void *dtb_buf, int off, char *path, char **properties, int nrprops)
 {
     int i, ret;
 
@@ -259,7 +223,7 @@ int dtb_add_properties_recursive(void *dtb_buf, int off, char *path, char **prop
     return 1;
 }
 
-int dtb_add_htc_m8_specific(void *dtb_buf)
+static int dtb_add_htc_m8_specific(void *dtb_buf)
 {
     int ret, off;
     char **configProperties = chosenConfigProps;
@@ -320,6 +284,42 @@ int dtb_add_htc_m8_specific(void *dtb_buf)
     dtb_add_properties_recursive(dtb_buf, ret, "htc_workaround_reserve_leading_pages",
         htc_workaround_reserve_leading_pagesProps, 2);
 
+    return 0;
+}
+
+static int m8_add_extra_regs(void *dtb_buf)
+{
+    FILE *f;
+    uint32_t reg;
+    int res;
+    int off;
+
+    off = fdt_path_offset(dtb_buf, "/memory");
+    if (off < 0)
+    {
+        fprintf(stderr, "DTB: Could not find memory node.\n");
+        return -1;
+    }
+
+    f = fopen("/proc/device-tree/memory/reg", "r");
+    if(!f)
+    {
+        fprintf(stderr, "DTB: Failed to open /proc/device-tree/memory/reg!\n");
+        return -1;
+    }
+
+    fdt_delprop(dtb_buf, off, "reg");
+
+    while(fread(&reg, sizeof(reg), 1, f) == 1)
+        fdt_appendprop(dtb_buf, off, "reg", &reg, sizeof(reg));
+
+    fclose(f);
+
+    if(dtb_add_htc_m8_specific(dtb_buf) < 0)
+    {
+        fprintf(stderr, "DTB: Failed to add m8 specifics!\n");
+        return -1;
+    }
     return 0;
 }
 
