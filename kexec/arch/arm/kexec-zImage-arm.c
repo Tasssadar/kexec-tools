@@ -104,7 +104,7 @@ void zImage_arm_usage(void)
 		"     --ramdisk=FILE        Use FILE as the kernel's initial ramdisk.\n"
 		"     --dtb(=dtb.img)       Load dtb from zImage, dtb.img or /proc/device-tree instead of using atags.\n"
 		"                           DTB appended to zImage and dtb.img currently only works on MSM devices.\n"
-		"     --boardname=NAME      Required if using DTB. Options: hammerhead bacon d851 shamu\n"
+		"     --boardname=NAME      Required if using DTB. Options: m8 hammerhead bacon d851 shamu\n"
 		"     --rd-addr=<addr>      Address to load initrd to.\n"
 		"     --atags-addr=<addr>   Address to load atags/dtb to.\n"
 		);
@@ -260,7 +260,7 @@ int atag_arm_load(struct kexec_info *info, unsigned long base,
 
 #define DTB_MAGIC               0xedfe0dd0
 #define DTB_OFFSET              0x2C
-#define DTB_PAD_SIZE            4096
+#define DTB_PAD_SIZE            65536
 
 static int get_appended_dtb(const char *kernel, off_t kernel_len, char **dtb_img, off_t *dtb_img_len)
 {
@@ -642,3 +642,4 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 
 	return 0;
 }
+

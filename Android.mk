@@ -45,6 +45,7 @@ LOCAL_SRC_FILES               := kexec/kexec.c kexec/ifdown.c \
                                  kexec/arch/arm/kexec-arm.c \
                                  kexec/arch/arm/mach.c \
                                  kexec/arch/arm/mach-hammerhead.c \
+				 kexec/arch/arm/mach-m8.c \
                                  kexec/arch/arm/mach-shamu.c \
                                  kexec/arch/arm/crashdump-arm.c \
                                  kexec/kexec-uImage.c kexec/purgatory.c \
