@@ -21,7 +21,6 @@
 #include "../../kexec.h"
 #include "../../kexec-syscall.h"
 #include "crashdump-arm.h"
-#include "../../fs2dt.h"
 #include "mach.h"
 
 off_t initrd_base = 0, initrd_size = 0;
@@ -510,6 +509,7 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 		off_t dtb_img_len = 0;
 		int free_dtb_img = 0;
 		int choose_res = 0;
+		int ret, off;
 
 		if(!mach)
 		{
@@ -538,84 +538,77 @@ int zImage_arm_load(int argc, char **argv, const char *buf, off_t len,
 		if(free_dtb_img)
 			free(dtb_img);
 
-		if(choose_res)
+		if(!choose_res)
 		{
-			int ret, off;
+			fprintf(stderr, "Failed to load DTB!\n");
+			return -1;
+		}
 
-			dtb_length = fdt_totalsize(dtb_buf) + DTB_PAD_SIZE;
-			dtb_buf = xrealloc(dtb_buf, dtb_length);
-			ret = fdt_open_into(dtb_buf, dtb_buf, dtb_length);
-			if(ret)
-				die("DTB: fdt_open_into failed");
+		dtb_length = fdt_totalsize(dtb_buf) + DTB_PAD_SIZE;
+		dtb_buf = xrealloc(dtb_buf, dtb_length);
+		ret = fdt_open_into(dtb_buf, dtb_buf, dtb_length);
+		if(ret)
+			die("DTB: fdt_open_into failed");
 
-			ret = (mach->add_extra_regs)(dtb_buf);
-			if (ret < 0)
-			{
-				fprintf(stderr, "DTB: error while adding mach-specific extra regs\n");
+		ret = (mach->add_extra_regs)(dtb_buf);
+		if (ret < 0)
+		{
+			fprintf(stderr, "DTB: error while adding mach-specific extra regs\n");
+			return -1;
+		}
+
+		if (command_line) {
+			const char *node_name = "/chosen";
+			const char *prop_name = "bootargs";
+
+			/* check if a /choosen subnode already exists */
+			off = fdt_path_offset(dtb_buf, node_name);
+
+			if (off == -FDT_ERR_NOTFOUND)
+				off = fdt_add_subnode(dtb_buf, off, node_name);
+
+			if (off < 0) {
+				fprintf(stderr, "DTB: Error adding %s node.\n", node_name);
 				return -1;
 			}
 
-			if (command_line) {
-				const char *node_name = "/chosen";
-				const char *prop_name = "bootargs";
-
-				/* check if a /choosen subnode already exists */
-				off = fdt_path_offset(dtb_buf, node_name);
-
-				if (off == -FDT_ERR_NOTFOUND)
-					off = fdt_add_subnode(dtb_buf, off, node_name);
-
-				if (off < 0) {
-					fprintf(stderr, "DTB: Error adding %s node.\n", node_name);
-					return -1;
-				}
-
-				if (fdt_setprop(dtb_buf, off, prop_name,
-						command_line, strlen(command_line) + 1) != 0) {
-					fprintf(stderr, "DTB: Error setting %s/%s property.\n",
-						node_name, prop_name);
-					return -1;
-				}
+			if (fdt_setprop(dtb_buf, off, prop_name,
+					command_line, strlen(command_line) + 1) != 0) {
+				fprintf(stderr, "DTB: Error setting %s/%s property.\n",
+					node_name, prop_name);
+				return -1;
 			}
-
-			if(ramdisk)
-			{
-				const char *node_name = "/chosen";
-				uint32_t initrd_start, initrd_end;
-
-				/* check if a /choosen subnode already exists */
-				off = fdt_path_offset(dtb_buf, node_name);
-
-				if (off == -FDT_ERR_NOTFOUND)
-					off = fdt_add_subnode(dtb_buf, off, node_name);
-
-				if (off < 0) {
-					fprintf(stderr, "DTB: Error adding %s node.\n", node_name);
-					return -1;
-				}
-
-				initrd_start = cpu_to_fdt32(initrd_base);
-				initrd_end = cpu_to_fdt32(initrd_base + initrd_size);
-
-				ret = fdt_setprop(dtb_buf, off, "linux,initrd-start", &initrd_start, sizeof(initrd_start));
-				if (ret)
-					die("DTB: Error setting %s/linux,initrd-start property.\n", node_name);
-
-				ret = fdt_setprop(dtb_buf, off, "linux,initrd-end", &initrd_end, sizeof(initrd_end));
-				if (ret)
-					die("DTB: Error setting %s/linux,initrd-end property.\n", node_name);
-			}
-
-			fdt_pack(dtb_buf);
 		}
-		else
+
+		if(ramdisk)
 		{
-			/*
-			* Extract the DTB from /proc/device-tree.
-			*/
-			printf("DTB: Failed to load dtb from zImage or dtb.img, using /proc/device-tree. This is unlikely to work.\n");
-			create_flatten_tree(&dtb_buf, &dtb_length, command_line);
+			const char *node_name = "/chosen";
+			uint32_t initrd_start, initrd_end;
+
+			/* check if a /choosen subnode already exists */
+			off = fdt_path_offset(dtb_buf, node_name);
+
+			if (off == -FDT_ERR_NOTFOUND)
+				off = fdt_add_subnode(dtb_buf, off, node_name);
+
+			if (off < 0) {
+				fprintf(stderr, "DTB: Error adding %s node.\n", node_name);
+				return -1;
+			}
+
+			initrd_start = cpu_to_fdt32(initrd_base);
+			initrd_end = cpu_to_fdt32(initrd_base + initrd_size);
+
+			ret = fdt_setprop(dtb_buf, off, "linux,initrd-start", &initrd_start, sizeof(initrd_start));
+			if (ret)
+				die("DTB: Error setting %s/linux,initrd-start property.\n", node_name);
+
+			ret = fdt_setprop(dtb_buf, off, "linux,initrd-end", &initrd_end, sizeof(initrd_end));
+			if (ret)
+				die("DTB: Error setting %s/linux,initrd-end property.\n", node_name);
 		}
+
+		fdt_pack(dtb_buf);
 
 		if(ramdisk)
 		{

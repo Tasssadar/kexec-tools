@@ -4,7 +4,6 @@
 #include <dirent.h>
 
 #include "../../kexec.h"
-#include "../../fs2dt.h"
 #include "mach.h"
 
 #define INVALID_SOC_REV_ID 0xFFFFFFFF
