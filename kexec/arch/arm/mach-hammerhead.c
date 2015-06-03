@@ -32,6 +32,8 @@ static uint32_t hammerhead_dtb_compatible(void *dtb, struct msm_id *devid, struc
     if (!prop || len <= 0) {
         printf("DTB: qcom,msm-id entry not found\n");
         return 0;
+    } else if(len == 12) {
+        dtb_id->board_rev = 0;
     } else if (len < (int)sizeof(struct msm_id)) {
         printf("DTB: qcom,msm-id entry size mismatch (%d != %d)\n",
             len, sizeof(struct msm_id));
@@ -41,7 +43,8 @@ static uint32_t hammerhead_dtb_compatible(void *dtb, struct msm_id *devid, struc
     dtb_id->platform_id = fdt32_to_cpu(((const struct msm_id *)prop)->platform_id);
     dtb_id->hardware_id = fdt32_to_cpu(((const struct msm_id *)prop)->hardware_id);
     dtb_id->soc_rev = fdt32_to_cpu(((const struct msm_id *)prop)->soc_rev);
-    dtb_id->board_rev = fdt32_to_cpu(((const struct msm_id *)prop)->board_rev);
+    if(len > 12)
+        dtb_id->board_rev = fdt32_to_cpu(((const struct msm_id *)prop)->board_rev);
 
     //printf("DTB: found dtb platform %u hw %u soc 0x%x board %u\n",
     //      dtb_id->platform_id, dtb_id->hardware_id, dtb_id->soc_rev, dtb_id->board_rev);
@@ -61,6 +64,7 @@ static int hammerhead_choose_dtb(const char *dtb_img, off_t dtb_len, char **dtb_
     FILE *f;
     struct msm_id devid, dtb_id;
     char *bestmatch_tag = NULL;
+    size_t id_read = 0;
     uint32_t bestmatch_tag_size;
     uint32_t bestmatch_soc_rev_id = INVALID_SOC_REV_ID;
     uint32_t bestmatch_board_rev_id = INVALID_SOC_REV_ID;
@@ -72,13 +76,16 @@ static int hammerhead_choose_dtb(const char *dtb_img, off_t dtb_len, char **dtb_
         return 0;
     }
 
-    fread(&devid, sizeof(struct msm_id), 1, f);
+    id_read = fread(&devid, 1, sizeof(struct msm_id), f);
     fclose(f);
 
     devid.platform_id = fdt32_to_cpu(devid.platform_id);
     devid.hardware_id = fdt32_to_cpu(devid.hardware_id);
     devid.soc_rev = fdt32_to_cpu(devid.soc_rev);
-    devid.board_rev = fdt32_to_cpu(devid.board_rev);
+    if(id_read > 12)
+        devid.board_rev = fdt32_to_cpu(devid.board_rev);
+    else
+        devid.board_rev = 0;
 
     printf("DTB: platform %u hw %u soc 0x%x board %u\n",
             devid.platform_id, devid.hardware_id, devid.soc_rev, devid.board_rev);
